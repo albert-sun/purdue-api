@@ -143,7 +143,9 @@ func GetDining(location string, date interface{}) (*DiningInfo, error) {
 		Location: rawDining.Location,
 	}
 	diningInfo.Meals = map[string]Meal{}
-	for _, rawMeal := range rawDining.Meals { // parse meals
+
+	// parse individual meals, get name, type, hours, and status (open or closed)
+	for _, rawMeal := range rawDining.Meals {
 		meal := Meal{
 			Name:          rawMeal.Name,
 			Open:          rawMeal.Status == "Open",
@@ -153,19 +155,21 @@ func GetDining(location string, date interface{}) (*DiningInfo, error) {
 			Stations:      map[string]Station{},
 		}
 
-		for _, rawStation := range rawMeal.Stations { // parse stations
+		// parse individual stations for name, items, and iconURL (?)
+		for _, rawStation := range rawMeal.Stations {
 			station := Station{
 				Name:    rawStation.Name,
 				IconURL: rawStation.IconURL,
 			}
 
-			for _, rawItem := range rawStation.Items { // parse items
+			// parse individual items for name and allergens (in []string format)
+			for _, rawItem := range rawStation.Items {
 				item := Item{
 					Name:       rawItem.Name,
 					Vegetarian: rawItem.Vegetarian,
 				}
 
-				// parse allergens into array
+				// parse "true" allergens into array of strings
 				for _, allergen := range rawItem.Allergens {
 					if allergen.Value {
 						item.Allergens = append(item.Allergens, allergen.Name)

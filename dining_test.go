@@ -21,10 +21,6 @@ func checkDiningFields(diningInfo *DiningInfo) string {
 func TestGetDiningSuccess(test *testing.T) {
 	now := time.Now()
 	for _, location := range validDining { // test for each
-		if location != "Earhart" {
-			continue
-		}
-
 		diningInfo, err := GetDining(location, now)
 		if err != nil { // generic error
 			test.Errorf("error with %s: %s", location, err.Error())
