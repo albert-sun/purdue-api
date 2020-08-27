@@ -12,20 +12,28 @@ import (
 
 // TODO maybe mirror the "name" field or whatnot in struct?
 
-// Item represents a single served item (station is key in map)
+// Item represents a single served item
 type Item struct {
 	Name       string   `json:"name"`
 	Vegetarian bool     `json:"isVegetarian"`
 	Allergens  []string `json:"allergens"`
 }
 
+// Station represents a single serving station containing items
+type Station struct {
+	Name    string `json:"name"`
+	Items   []Item `json:"items"`
+	IconURL string `json:"iconURL"`
+}
+
 // Meal contains meal information including opening hours and station dishes (meal name is key in map)
 type Meal struct {
-	Open          bool              `json:"open"`
-	Type          string            `json:"type"`
-	StartingHours string            `json:"startingHours"` // sick of parsing...
-	EndingHours   string            `json:"endingHours"`   // sick of parsing...
-	Stations      map[string][]Item `json:"stations"`
+	Name          string             `json:"name"` // just in case
+	Open          bool               `json:"open"`
+	Type          string             `json:"type"`
+	StartingHours string             `json:"startingHours"` // sick of parsing...
+	EndingHours   string             `json:"endingHours"`   // sick of parsing...
+	Stations      map[string]Station `json:"stations"`
 }
 
 // Purdue Dining API - Dining court opening times, menu options, and other information (?)
@@ -43,16 +51,17 @@ type rawDiningDayInfo struct {
 	Location string `json:"Location"`
 	Notes    string `json:"Notes"` // needed?
 	Meals    []struct {
-		Name   string `json:"Name"`
+		Name   string `json:"Name"` // different, holiday meals?
 		Type   string `json:"Type"`
-		Status string `json:"Status"`
+		Status string `json:"Status"` // open or closed
 		Hours  struct {
-			StartTime string `json:"StartTime"`
-			EndTime   string `json:"EndTime"`
+			StartTime string `json:"StartTime"` // HH:MM:SS 24hr
+			EndTime   string `json:"EndTime"`   // HH:MM:SS 24hr
 		} `json:"Hours"`
 		Stations []struct {
-			Name  string `json:"Name"`
-			Items []struct {
+			Name    string `json:"Name"`
+			IconURL string `json:"IconUrl"`
+			Items   []struct {
 				Name       string `json:"Name"`
 				Vegetarian bool   `json:"IsVegetarian"`
 				Allergens  []struct {
@@ -128,17 +137,23 @@ func DiningGetDay(location string, date interface{}) (*DiningDayInfo, error) {
 		Location: rawDining.Location,
 	}
 	diningInfo.Meals = map[string]Meal{}
-	for _, rawMeal := range rawDining.Meals { // parse meal
+	for _, rawMeal := range rawDining.Meals { // parse meals
 		meal := Meal{
+			Name:          rawMeal.Name,
 			Open:          rawMeal.Status == "Open",
 			Type:          rawMeal.Type,
 			StartingHours: rawMeal.Hours.StartTime,
 			EndingHours:   rawMeal.Hours.EndTime,
+			Stations:      map[string]Station{},
 		}
-		meal.Stations = map[string][]Item{}
+
 		for _, rawStation := range rawMeal.Stations { // parse stations
-			var items []Item
-			for _, rawItem := range rawStation.Items {
+			station := Station{
+				Name:    rawStation.Name,
+				IconURL: rawStation.IconURL,
+			}
+
+			for _, rawItem := range rawStation.Items { // parse items
 				item := Item{
 					Name:       rawItem.Name,
 					Vegetarian: rawItem.Vegetarian,
@@ -150,9 +165,11 @@ func DiningGetDay(location string, date interface{}) (*DiningDayInfo, error) {
 						item.Allergens = append(item.Allergens, allergen.Name)
 					}
 				}
+
+				station.Items = append(station.Items, item)
 			}
 
-			meal.Stations[rawStation.Name] = items
+			meal.Stations[rawStation.Name] = station
 		}
 
 		diningInfo.Meals[rawMeal.Name] = meal
