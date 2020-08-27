@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/remeh/sizedwaitgroup"
 	"github.com/valyala/fasthttp"
 )
 
@@ -37,10 +38,10 @@ type Meal struct {
 
 // DiningInfo contains information about one location's meals for one day.
 type DiningInfo struct {
-	Notes string `json:"notes"`
-	// Add date maybe? String or time?
-	Location string          `json:"location"`
-	Meals    map[string]Meal `json:"meals"`
+	Notes     string          `json:"notes"`
+	Available bool            `json:"available"` // whether has menu info
+	Location  string          `json:"location"`
+	Meals     map[string]Meal `json:"meals"`
 }
 
 // All the raw info no-one likes dealing with...
@@ -78,6 +79,7 @@ var GenericParsingErr = errors.New("error parsing")
 
 // More specific errors for different purposes
 var InvalidLocationErr = errors.Wrap(GenericParameterErr, "invalid location")
+var InvalidDayRangeErr = errors.Wrap(GenericParameterErr, "invalid day range")
 
 // Valid dining options are retrieved from https://dining.purdue.edu/menus/
 var validDining = []string{
@@ -96,9 +98,8 @@ var diningHeaders = map[string]string{
 
 // TODO deal with locations being case sensitive, seriously Purdue?
 // GetDining retrieves the day's dining for one dining "location" (just meal courts?).
-// Accepts date as a string of format YYYY-MM-DD or a time.Time which is parsed into the former.
-// Returns a populated pointer if successful, otherwise returns an error (refer to above errors and comments)
-func GetDining(location string, date interface{}) (*DiningInfo, error) {
+// Returns a populated pointer if successful, otherwise returns an error (refer to above errors for errors.Is)
+func GetDining(location string, date time.Time) (*DiningInfo, error) {
 	var err error
 	client := fasthttp.Client{} // TODO maybe X clients per config?
 
@@ -107,17 +108,8 @@ func GetDining(location string, date interface{}) (*DiningInfo, error) {
 		return nil, InvalidLocationErr
 	}
 
-	// check date formatting and convert to time.Time if needed
-	var dateInput string
-	switch date.(type) { // remove redundant lines?
-	case string:
-		dateInput = date.(string)
-	case time.Time:
-		parsedDate := date.(time.Time) // for convenience purposes
-		dateInput = parsedDate.Format(dateLayout)
-	}
-
 	// create URL, perform actual request, TODO for now return error if request error
+	dateInput := date.Format(dateLayout)
 	menuURL := fmt.Sprintf("%s/%s/%s", menuAPIURL, location, dateInput)
 	response, err := compactGET(&client, menuURL, fastHeaders(diningHeaders)) // make sure to release
 	if err != nil {
@@ -139,13 +131,19 @@ func GetDining(location string, date interface{}) (*DiningInfo, error) {
 
 	// begin painstaking parsing process, UGH
 	diningInfo := DiningInfo{
-		Notes:    rawDining.Notes,
-		Location: rawDining.Location,
+		Notes:     rawDining.Notes,
+		Available: true,
+		Location:  rawDining.Location,
 	}
 	diningInfo.Meals = map[string]Meal{}
 
 	// parse individual meals, get name, type, hours, and status (open or closed)
 	for _, rawMeal := range rawDining.Meals {
+		// flag if unavailable but keep parsing
+		if rawMeal.Status == "Unavailable" {
+			diningInfo.Available = true
+		}
+
 		meal := Meal{
 			Name:          rawMeal.Name,
 			Open:          rawMeal.Status == "Open",
@@ -186,4 +184,51 @@ func GetDining(location string, date interface{}) (*DiningInfo, error) {
 	}
 
 	return &diningInfo, nil
+}
+
+// TODO maybe use config for controlling number of concurrent goroutines?
+// GetDiningRange gets dining info for one location over a range of dates (positive or negative number of days).
+// Returns a populated map[int]*DiningInfo if successful (where int represents date range), else returns err != nil.
+// For concurrency, the last error found is returned if any is found.
+func GetDiningRange(location string, date time.Time, dayStart int, dayEnd int) (map[int]*DiningInfo, error) {
+	threads := 10 // should be okay
+	diningInfos := map[int]*DiningInfo{}
+
+	if dayEnd < dayStart {
+		return nil, InvalidDayRangeErr
+	}
+
+	// get array of times for processing
+	var index int
+	dates := make([]time.Time, dayEnd-dayStart+1)
+	for i := dayStart; i <= dayEnd; i++ {
+		dates[index] = date.AddDate(0, 0, i)
+		index++
+	}
+
+	// concurrent goroutines calling GetDining
+	var swgErr error // better way?
+	swg := sizedwaitgroup.New(threads)
+	for j := 0; j < len(dates); j++ {
+		swg.Add()
+		go func(loc string, k int, d time.Time) { // goroutine for swg
+			defer swg.Done()
+
+			diningInfo, err := GetDining(loc, d)
+			if err != nil { // log MOST RECENT error found
+				swgErr = err
+				return
+			}
+
+			diningInfos[k+dayStart] = diningInfo // okay because no concurrent read and write
+		}(location, j, dates[j])
+	}
+
+	swg.Wait()
+
+	if swgErr != nil {
+		return nil, swgErr
+	}
+
+	return diningInfos, nil
 }

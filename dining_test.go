@@ -18,29 +18,38 @@ func checkDiningFields(diningInfo *DiningInfo) string {
 	return ""
 }
 
+// GetDining
 func TestGetDiningSuccess(test *testing.T) {
 	now := time.Now()
 	for _, location := range validDining { // test for each
 		diningInfo, err := GetDining(location, now)
 		if err != nil { // generic error
-			test.Errorf("error with %s: %s", location, err.Error())
+			test.Errorf("error checking %s: %s", location, err.Error())
 		}
 
 		if missing := checkDiningFields(diningInfo); missing != "" {
-			test.Errorf("error with %s: missing field %s", location, missing)
+			test.Errorf("error checking %s: missing field %s", location, missing)
 		}
 	}
-} // GetDining - test valid request with all locations and current date
+} // test valid request with all locations and current date
 func TestGetDiningParameterLocation(test *testing.T) {
-	dateStr := time.Now().Format(dateLayout)
-	_, err := GetDining("foo", dateStr)
+	_, err := GetDining("foo", time.Now())
 	if !errors.Is(err, GenericParameterErr) {
 		test.Errorf("should error: generic parameter")
 	}
-} // GetDining - test invalid location not within array
-func TestGetDiningParameterDate(test *testing.T) {
-	_, err := GetDining("earhart", "")
-	if !errors.Is(err, GenericParameterErr) {
-		test.Errorf("should error: generic parameter")
+} // test invalid location not within array
+
+// GetDiningRange
+func TestGetDiningRangeSuccess(test *testing.T) {
+	now := time.Now()
+	diningInfos, err := GetDiningRange("Earhart", now, 0, 5)
+	if err != nil { // generic error
+		test.Errorf("error checking Earhart: %s", err.Error())
 	}
-} // GetDining - test invalid date with Earhart and empty string
+
+	if len(diningInfos) == 0 {
+		test.Errorf("error checking Earhart: zero-length map (expected 6)")
+	} else if missing := checkDiningFields(diningInfos[0]); missing != "" {
+		test.Errorf("error checking Earhart: missing field %s", missing)
+	}
+} // test valid request with Earhart and 5-day ahead range
