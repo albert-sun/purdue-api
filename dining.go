@@ -3,7 +3,6 @@ package purdue_api
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -36,18 +35,17 @@ type Meal struct {
 	Stations      map[string]Station `json:"stations"`
 }
 
-// Purdue Dining API - Dining court opening times, menu options, and other information (?)
-// Information about each location each day is structured into one struct containing meals within a map[string]string.
-type DiningDayInfo struct {
-	Notes    string          `json:"notes"`
+// DiningInfo contains information about one location's meals for one day.
+type DiningInfo struct {
+	Notes string `json:"notes"`
+	// Add date maybe? String or time?
 	Location string          `json:"location"`
-	Date     string          `json:"date"` // replace with time.Time?
 	Meals    map[string]Meal `json:"meals"`
 }
 
 // All the raw info no-one likes dealing with...
 // Who even designed this JSON response anyway?
-type rawDiningDayInfo struct {
+type rawDiningInfo struct {
 	Location string `json:"Location"`
 	Notes    string `json:"Notes"` // needed?
 	Meals    []struct {
@@ -79,30 +77,33 @@ var GenericRequestErr = errors.New("error performing request") // wrap??
 var GenericParsingErr = errors.New("error parsing")
 
 // More specific errors for different purposes
-var InvalidLocationErr = errors.Errorf("%w: invalid location", GenericParameterErr)
-var InvalidDateErr = errors.Errorf("%w: invalid date format", GenericParameterErr)
+var InvalidLocationErr = errors.Wrap(GenericParameterErr, "invalid location")
 
 // Valid dining options are retrieved from https://dining.purdue.edu/menus/
 var validDining = []string{
-	"earhart", "ford", "hillenbrand", "wiley", "windsor", // dining courts
-	"1bowl", "all american dining room", "pete's za", "the gathering place", // other meal-swipe dining
-	"earhart on-the-go!", "ford on-the-go!", "knoy on-the-go!", "lawson on-the-go!", "lilly on-the-go!",
-	"windsor on-the-go!", // on-the-go (seriously, who even eats this?)
+	"Earhart", "Ford", "Hillenbrand", "Wiley", "Windsor", // dining courts
+	"1Bowl", "All American Dining Room", "Pete's Za", "The Gathering Place", // other meal-swipe dining
+	"Earhart On-the-GO!", "Ford On-the-GO!", "Knoy On-the-GO!", "Lawson On-the-GO!", "Lilly On-the-GO!",
+	"Windsor On-the-GO!", // on-the-go (seriously, who even eats this?)
 }
 
 // Random constants not declared inside functions
 const menuAPIURL = "https://api.hfs.purdue.edu/menus/v2/locations" // just in case
 const dateLayout = "2006-01-02"                                    // YYYY-MM-DD
+var diningHeaders = map[string]string{
+	"Accept": "application/json",
+}
 
-// DiningGetDay retrieves the day's dining for one dining "location" (just meal courts?).
+// TODO deal with locations being case sensitive, seriously Purdue?
+// GetDining retrieves the day's dining for one dining "location" (just meal courts?).
 // Accepts date as a string of format YYYY-MM-DD or a time.Time which is parsed into the former.
 // Returns a populated pointer if successful, otherwise returns an error (refer to above errors and comments)
-func DiningGetDay(location string, date interface{}) (*DiningDayInfo, error) {
+func GetDining(location string, date interface{}) (*DiningInfo, error) {
 	var err error
 	client := fasthttp.Client{} // TODO maybe X clients per config?
 
 	// check whether valid dining location passed
-	if stringArrContains(validDining, strings.ToLower(location)) {
+	if !stringArrContains(validDining, location) {
 		return nil, InvalidLocationErr
 	}
 
@@ -118,21 +119,26 @@ func DiningGetDay(location string, date interface{}) (*DiningDayInfo, error) {
 
 	// create URL, perform actual request, TODO for now return error if request error
 	menuURL := fmt.Sprintf("%s/%s/%s", menuAPIURL, location, dateInput)
-	response, err := compactGET(&client, menuURL) // no need for headers, make sure to release
+	response, err := compactGET(&client, menuURL, fastHeaders(diningHeaders)) // make sure to release
 	if err != nil {
-		return nil, errors.Errorf("%w, %w", GenericRequestErr, err) // does this work?
+		return nil, errors.Wrap(GenericRequestErr, err.Error())
 	}
 
 	// unmarshal into JSON, return if error
-	var rawDining rawDiningDayInfo
+	var rawDining rawDiningInfo
 	err = json.Unmarshal(response.Body(), &rawDining)
 	if err != nil {
-		return nil, errors.Errorf("%w: invalid json format", GenericParsingErr)
+		return nil, errors.Wrap(GenericParsingErr, "invalid json format")
 	}
 	fasthttp.ReleaseResponse(response)
 
+	// assume invalid location if not populated
+	if rawDining.Location == "" {
+		return nil, InvalidLocationErr
+	}
+
 	// begin painstaking parsing process, UGH
-	diningInfo := DiningDayInfo{
+	diningInfo := DiningInfo{
 		Notes:    rawDining.Notes,
 		Location: rawDining.Location,
 	}
