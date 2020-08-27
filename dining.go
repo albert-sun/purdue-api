@@ -1,29 +1,77 @@
 package purdue_api
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/valyala/fasthttp"
 )
 
-// Date contains year, month, day of date, pretty self-explanatory.
-type Date struct {
-	Year  int `json:"year"`
-	Month int `json:"month"`
-	Day   int `json:"day"`
+// TODO maybe mirror the "name" field or whatnot in struct?
+
+// Item represents a single served item (station is key in map)
+type Item struct {
+	Name       string   `json:"name"`
+	Vegetarian bool     `json:"isVegetarian"`
+	Allergens  []string `json:"allergens"`
+}
+
+// Meal contains meal information including opening hours and station dishes (meal name is key in map)
+type Meal struct {
+	Open          bool              `json:"open"`
+	Type          string            `json:"type"`
+	StartingHours string            `json:"startingHours"` // sick of parsing...
+	EndingHours   string            `json:"endingHours"`   // sick of parsing...
+	Stations      map[string][]Item `json:"stations"`
 }
 
 // Purdue Dining API - Dining court opening times, menu options, and other information (?)
 // Information about each location each day is structured into one struct containing meals within a map[string]string.
 type DiningDayInfo struct {
-	Location string            `json:"location"`
-	Date     `json:"date"`     // easy parsing
-	Meals    map[string]string `json:"meals"`
+	Notes    string          `json:"notes"`
+	Location string          `json:"location"`
+	Date     string          `json:"date"` // replace with time.Time?
+	Meals    map[string]Meal `json:"meals"`
 }
 
-var InvalidLocationErr = errors.New("invalid dining location")
-var InvalidDateErr = errors.New("invalid date format") // for string passed date
+// All the raw info no-one likes dealing with...
+// Who even designed this JSON response anyway?
+type rawDiningDayInfo struct {
+	Location string `json:"Location"`
+	Notes    string `json:"Notes"` // needed?
+	Meals    []struct {
+		Name   string `json:"Name"`
+		Type   string `json:"Type"`
+		Status string `json:"Status"`
+		Hours  struct {
+			StartTime string `json:"StartTime"`
+			EndTime   string `json:"EndTime"`
+		} `json:"Hours"`
+		Stations []struct {
+			Name  string `json:"Name"`
+			Items []struct {
+				Name       string `json:"Name"`
+				Vegetarian bool   `json:"IsVegetarian"`
+				Allergens  []struct {
+					Name  string `json:"Name"`
+					Value bool   `json:"Value"`
+				} `json:"Allergens"`
+			}
+		}
+	} `json:"Meals"`
+}
+
+// Generic errors wrapped to make others
+var GenericParameterErr = errors.New("invalid parameter")
+var GenericRequestErr = errors.New("error performing request") // wrap??
+var GenericParsingErr = errors.New("error parsing")
+
+// More specific errors for different purposes
+var InvalidLocationErr = errors.Errorf("%w: invalid location", GenericParameterErr)
+var InvalidDateErr = errors.Errorf("%w: invalid date format", GenericParameterErr)
 
 // Valid dining options are retrieved from https://dining.purdue.edu/menus/
 var validDining = []string{
@@ -34,13 +82,15 @@ var validDining = []string{
 }
 
 // Random constants not declared inside functions
-const dateLayout = "2006-01-02" // YYYY-MM-DD
+const menuAPIURL = "https://api.hfs.purdue.edu/menus/v2/locations" // just in case
+const dateLayout = "2006-01-02"                                    // YYYY-MM-DD
 
 // DiningGetDay retrieves the day's dining for one dining "location" (just meal courts?).
 // Accepts date as a string of format YYYY-MM-DD or a time.Time which is parsed into the former.
 // Returns a populated pointer if successful, otherwise returns an error (refer to above errors and comments)
 func DiningGetDay(location string, date interface{}) (*DiningDayInfo, error) {
 	var err error
+	client := fasthttp.Client{} // TODO maybe X clients per config?
 
 	// check whether valid dining location passed
 	if stringArrContains(validDining, strings.ToLower(location)) {
@@ -48,26 +98,65 @@ func DiningGetDay(location string, date interface{}) (*DiningDayInfo, error) {
 	}
 
 	// check date formatting and convert to time.Time if needed
-	var parsedDate time.Time
-	switch date.(type) {
+	var dateInput string
+	switch date.(type) { // remove redundant lines?
 	case string:
-		parsedDate, err = time.Parse(dateLayout, date.(string))
-		if err != nil {
-			return nil, InvalidDateErr
-		}
-		// can't fallthrough...
+		dateInput = date.(string)
 	case time.Time:
-		parsedDate = date.(time.Time) // for convenience purposes
+		parsedDate := date.(time.Time) // for convenience purposes
+		dateInput = parsedDate.Format(dateLayout)
 	}
 
-	// prepare actual info struct before performing requests
+	// create URL, perform actual request, TODO for now return error if request error
+	menuURL := fmt.Sprintf("%s/%s/%s", menuAPIURL, location, dateInput)
+	response, err := compactGET(&client, menuURL) // no need for headers, make sure to release
+	if err != nil {
+		return nil, errors.Errorf("%w, %w", GenericRequestErr, err) // does this work?
+	}
+
+	// unmarshal into JSON, return if error
+	var rawDining rawDiningDayInfo
+	err = json.Unmarshal(response.Body(), &rawDining)
+	if err != nil {
+		return nil, errors.Errorf("%w: invalid json format", GenericParsingErr)
+	}
+	fasthttp.ReleaseResponse(response)
+
+	// begin painstaking parsing process, UGH
 	diningInfo := DiningDayInfo{
-		Date: Date{
-			Year:  parsedDate.Year(),
-			Month: int(parsedDate.Month()), // one-indexed
-			Day:   parsedDate.Day(),
-		},
-	} // don't want another struct just for date
+		Notes:    rawDining.Notes,
+		Location: rawDining.Location,
+	}
+	diningInfo.Meals = map[string]Meal{}
+	for _, rawMeal := range rawDining.Meals { // parse meal
+		meal := Meal{
+			Open:          rawMeal.Status == "Open",
+			Type:          rawMeal.Type,
+			StartingHours: rawMeal.Hours.StartTime,
+			EndingHours:   rawMeal.Hours.EndTime,
+		}
+		meal.Stations = map[string][]Item{}
+		for _, rawStation := range rawMeal.Stations { // parse stations
+			var items []Item
+			for _, rawItem := range rawStation.Items {
+				item := Item{
+					Name:       rawItem.Name,
+					Vegetarian: rawItem.Vegetarian,
+				}
+
+				// parse allergens into array
+				for _, allergen := range rawItem.Allergens {
+					if allergen.Value {
+						item.Allergens = append(item.Allergens, allergen.Name)
+					}
+				}
+			}
+
+			meal.Stations[rawStation.Name] = items
+		}
+
+		diningInfo.Meals[rawMeal.Name] = meal
+	}
 
 	return &diningInfo, nil
 }
