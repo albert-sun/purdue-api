@@ -19,37 +19,59 @@ func checkDiningFields(diningInfo *DiningInfo) string {
 }
 
 // GetDining
-func TestGetDiningSuccess(test *testing.T) {
+func TestDiningSuccess(test *testing.T) {
 	now := time.Now()
-	for _, location := range validDining { // test for each
+	for _, location := range DiningLocations { // test for each
 		diningInfo, err := GetDining(location, now)
 		if err != nil { // generic error
-			test.Errorf("error checking %s: %s", location, err.Error())
+			test.Errorf("error for %s: %s", location, err.Error())
 		}
 
 		if missing := checkDiningFields(diningInfo); missing != "" {
-			test.Errorf("error checking %s: missing field %s", location, missing)
+			test.Errorf("error for %s: missing field %s", location, missing)
 		}
 	}
 } // test valid request with all locations and current date
-func TestGetDiningParameterLocation(test *testing.T) {
+func TestDiningInvalidLocation(test *testing.T) {
 	_, err := GetDining("foo", time.Now())
 	if !errors.Is(err, GenericParameterErr) {
 		test.Errorf("should error: generic parameter")
 	}
 } // test invalid location not within array
 
-// GetDiningRange
-func TestGetDiningRangeSuccess(test *testing.T) {
+// GetDiningDays
+func TestDiningDaysSuccess(test *testing.T) {
 	now := time.Now()
-	diningInfos, err := GetDiningRange("Earhart", now, 0, 5)
+	diningInfos, err := GetDiningDays("Earhart", now, 0, 5)
 	if err != nil { // generic error
-		test.Errorf("error checking Earhart: %s", err.Error())
+		test.Errorf("error: %s", err.Error())
 	}
 
 	if len(diningInfos) == 0 {
-		test.Errorf("error checking Earhart: zero-length map (expected 6)")
+		test.Errorf("error: zero-length map (expected 6)")
 	} else if missing := checkDiningFields(diningInfos[0]); missing != "" {
-		test.Errorf("error checking Earhart: missing field %s", missing)
+		test.Errorf("error: missing field %s", missing)
 	}
 } // test valid request with Earhart and 5-day ahead range
+func TestDiningDaysInvalidDays(test *testing.T) {
+	now := time.Now()
+	_, err := GetDiningDays("Earhart", now, 5, 0)
+	if !errors.Is(err, InvalidDayRangeErr) {
+		test.Errorf("should error: invalid day range")
+	}
+} // test start integer after end integer
+
+// GetDiningLocations
+func TestDiningAllSuccess(test *testing.T) {
+	now := time.Now()
+	diningInfos, err := GetDiningLocations(now)
+	if err != nil { // generic error
+		test.Errorf("error: %s", err.Error())
+	}
+
+	if len(diningInfos) == 0 {
+		test.Errorf("error: zero-length map (expected %d)", len(DiningLocations))
+	} else if missing := checkDiningFields(diningInfos["Earhart"]); missing != "" {
+		test.Errorf("error: missing field %s", missing)
+	}
+} // test valid request with current date

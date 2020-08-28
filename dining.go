@@ -82,7 +82,7 @@ var InvalidLocationErr = errors.Wrap(GenericParameterErr, "invalid location")
 var InvalidDayRangeErr = errors.Wrap(GenericParameterErr, "invalid day range")
 
 // Valid dining options are retrieved from https://dining.purdue.edu/menus/
-var validDining = []string{
+var DiningLocations = []string{
 	"Earhart", "Ford", "Hillenbrand", "Wiley", "Windsor", // dining courts
 	"1Bowl", "All American Dining Room", "Pete's Za", "The Gathering Place", // other meal-swipe dining
 	"Earhart On-the-GO!", "Ford On-the-GO!", "Knoy On-the-GO!", "Lawson On-the-GO!", "Lilly On-the-GO!",
@@ -104,7 +104,7 @@ func GetDining(location string, date time.Time) (*DiningInfo, error) {
 	client := fasthttp.Client{} // TODO maybe X clients per config?
 
 	// check whether valid dining location passed
-	if !stringArrContains(validDining, location) {
+	if !stringArrContains(DiningLocations, location) {
 		return nil, InvalidLocationErr
 	}
 
@@ -187,10 +187,10 @@ func GetDining(location string, date time.Time) (*DiningInfo, error) {
 }
 
 // TODO maybe use config for controlling number of concurrent goroutines?
-// GetDiningRange gets dining info for one location over a range of dates (positive or negative number of days).
+// GetDiningDays gets dining info for one location over a range of dates (positive or negative number of days).
 // Returns a populated map[int]*DiningInfo if successful (where int represents date range), else returns err != nil.
 // For concurrency, the last error found is returned if any is found.
-func GetDiningRange(location string, date time.Time, dayStart int, dayEnd int) (map[int]*DiningInfo, error) {
+func GetDiningDays(location string, date time.Time, dayStart int, dayEnd int) (map[int]*DiningInfo, error) {
 	threads := 10 // should be okay
 	diningInfos := map[int]*DiningInfo{}
 
@@ -222,6 +222,40 @@ func GetDiningRange(location string, date time.Time, dayStart int, dayEnd int) (
 
 			diningInfos[k+dayStart] = diningInfo // okay because no concurrent read and write
 		}(location, j, dates[j])
+	}
+
+	swg.Wait()
+
+	if swgErr != nil {
+		return nil, swgErr
+	}
+
+	return diningInfos, nil
+}
+
+// GetDiningLocations gets all dining info (from what's been implemented) for a specific day.
+// Returns a populated map[string]*DiningInfo if successful (where string represents location), else returns err !- nil.
+// For concurrency, the last error found is returned if any is found.
+func GetDiningLocations(date time.Time) (map[string]*DiningInfo, error) {
+	threads := len(DiningLocations) // should be okay
+	diningInfos := map[string]*DiningInfo{}
+
+	// concurrent goroutines calling GetDining
+	var swgErr error // better way?
+	swg := sizedwaitgroup.New(threads)
+	for j := 0; j < len(DiningLocations); j++ {
+		swg.Add()
+		go func(loc string, k int, d time.Time) { // goroutine for swg
+			defer swg.Done()
+
+			diningInfo, err := GetDining(loc, d)
+			if err != nil { // log MOST RECENT error found
+				swgErr = err
+				return
+			}
+
+			diningInfos[diningInfo.Location] = diningInfo // okay because no concurrent read and write
+		}(DiningLocations[j], j, date)
 	}
 
 	swg.Wait()
