@@ -76,10 +76,12 @@ type rawDiningInfo struct {
 var GenericParameterErr = errors.New("invalid parameter")
 var GenericRequestErr = errors.New("error performing request") // wrap??
 var GenericParsingErr = errors.New("error parsing")
+var GenericConfigErr = errors.New("invalid config") // checks len(locations) != 0
 
 // More specific errors for different purposes
 var InvalidLocationErr = errors.Wrap(GenericParameterErr, "invalid location")
 var InvalidDayRangeErr = errors.Wrap(GenericParameterErr, "invalid day range")
+var UninitializedConfigErr = errors.Wrap(GenericConfigErr, "uninitialized config")
 
 // Valid dining options are retrieved from https://dining.purdue.edu/menus/
 var DiningLocations = []string{
@@ -99,9 +101,13 @@ var diningHeaders = map[string]string{
 // TODO deal with locations being case sensitive, seriously Purdue?
 // GetDining retrieves the day's dining for one dining "location" (just meal courts?).
 // Returns a populated pointer if successful, otherwise returns an error (refer to above errors for errors.Is)
-func GetDining(location string, date time.Time) (*DiningInfo, error) {
+func (config *DiningConfig) GetDining(location string, date time.Time) (*DiningInfo, error) {
 	var err error
-	client := fasthttp.Client{} // TODO maybe X clients per config?
+
+	// check whether config has locations
+	if len(config.Locations) == 0 {
+		return nil, UninitializedConfigErr
+	}
 
 	// check whether valid dining location passed
 	if !stringArrContains(DiningLocations, location) {
@@ -109,6 +115,7 @@ func GetDining(location string, date time.Time) (*DiningInfo, error) {
 	}
 
 	// create URL, perform actual request, TODO for now return error if request error
+	client := fasthttp.Client{} // TODO maybe X clients per config?
 	dateInput := date.Format(dateLayout)
 	menuURL := fmt.Sprintf("%s/%s/%s", menuAPIURL, location, dateInput)
 	response, err := compactGET(&client, menuURL, fastHeaders(diningHeaders)) // make sure to release
@@ -190,10 +197,13 @@ func GetDining(location string, date time.Time) (*DiningInfo, error) {
 // GetDiningDays gets dining info for one location over a range of dates (positive or negative number of days).
 // Returns a populated map[int]*DiningInfo if successful (where int represents date range), else returns err != nil.
 // For concurrency, the last error found is returned if any is found.
-func GetDiningDays(location string, date time.Time, dayStart int, dayEnd int) (map[int]*DiningInfo, error) {
-	threads := 10 // should be okay
-	diningInfos := map[int]*DiningInfo{}
+func (config *DiningConfig) GetDiningDays(location string, date time.Time, dayStart int, dayEnd int) (map[int]*DiningInfo, error) {
+	// check whether config has locations
+	if len(config.Locations) == 0 {
+		return nil, UninitializedConfigErr
+	}
 
+	// check whether day range is valid (start <= end)
 	if dayEnd < dayStart {
 		return nil, InvalidDayRangeErr
 	}
@@ -208,13 +218,14 @@ func GetDiningDays(location string, date time.Time, dayStart int, dayEnd int) (m
 
 	// concurrent goroutines calling GetDining
 	var swgErr error // better way?
-	swg := sizedwaitgroup.New(threads)
+	swg := sizedwaitgroup.New(config.Concurrent)
+	diningInfos := map[int]*DiningInfo{}
 	for j := 0; j < len(dates); j++ {
 		swg.Add()
 		go func(loc string, k int, d time.Time) { // goroutine for swg
 			defer swg.Done()
 
-			diningInfo, err := GetDining(loc, d)
+			diningInfo, err := config.GetDining(loc, d)
 			if err != nil { // log MOST RECENT error found
 				swgErr = err
 				return
@@ -236,19 +247,23 @@ func GetDiningDays(location string, date time.Time, dayStart int, dayEnd int) (m
 // GetDiningLocations gets all dining info (from what's been implemented) for a specific day.
 // Returns a populated map[string]*DiningInfo if successful (where string represents location), else returns err !- nil.
 // For concurrency, the last error found is returned if any is found.
-func GetDiningLocations(date time.Time) (map[string]*DiningInfo, error) {
-	threads := len(DiningLocations) // should be okay
+func (config *DiningConfig) GetDiningLocations(date time.Time) (map[string]*DiningInfo, error) {
+	// check whether config has locations
+	if len(config.Locations) == 0 {
+		return nil, UninitializedConfigErr
+	}
+
 	diningInfos := map[string]*DiningInfo{}
 
 	// concurrent goroutines calling GetDining
 	var swgErr error // better way?
-	swg := sizedwaitgroup.New(threads)
+	swg := sizedwaitgroup.New(config.Concurrent)
 	for j := 0; j < len(DiningLocations); j++ {
 		swg.Add()
 		go func(loc string, k int, d time.Time) { // goroutine for swg
 			defer swg.Done()
 
-			diningInfo, err := GetDining(loc, d)
+			diningInfo, err := config.GetDining(loc, d)
 			if err != nil { // log MOST RECENT error found
 				swgErr = err
 				return

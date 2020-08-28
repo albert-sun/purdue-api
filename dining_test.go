@@ -1,12 +1,23 @@
 package purdue_api
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
+	"os"
 	"testing"
 	"time"
 )
+
+var testDiningConfig *DiningConfig
+
+func TestMain(m *testing.M) {
+	var err error
+	testDiningConfig, err = NewDiningConfig(10) // ignore okay?
+	if err != nil {
+		panic(err) // what else do I do?
+	}
+
+	os.Exit(m.Run())
+}
 
 // checkDiningFields checks whether specific response fields are populated.
 // Returns a non-empty string specifying the missing field if any exist, otherwise returns an empty string.
@@ -24,14 +35,9 @@ func checkDiningFields(diningInfo *DiningInfo) string {
 func TestDiningSuccess(test *testing.T) {
 	now := time.Now()
 	for _, location := range DiningLocations { // test for each
-		diningInfo, err := GetDining(location, now)
+		diningInfo, err := testDiningConfig.GetDining(location, now)
 		if err != nil { // generic error
 			test.Errorf("error for %s: %s", location, err.Error())
-		}
-
-		if location == "Earhart" {
-			str, _ := json.Marshal(diningInfo)
-			fmt.Println(string(str))
 		}
 
 		if missing := checkDiningFields(diningInfo); missing != "" {
@@ -40,7 +46,7 @@ func TestDiningSuccess(test *testing.T) {
 	}
 } // test valid request with all locations and current date
 func TestDiningInvalidLocation(test *testing.T) {
-	_, err := GetDining("foo", time.Now())
+	_, err := testDiningConfig.GetDining("foo", time.Now())
 	if !errors.Is(err, GenericParameterErr) {
 		test.Errorf("should error: generic parameter")
 	}
@@ -49,7 +55,7 @@ func TestDiningInvalidLocation(test *testing.T) {
 // GetDiningDays
 func TestDiningDaysSuccess(test *testing.T) {
 	now := time.Now()
-	diningInfos, err := GetDiningDays("Earhart", now, 0, 5)
+	diningInfos, err := testDiningConfig.GetDiningDays("Earhart", now, 0, 5)
 	if err != nil { // generic error
 		test.Errorf("error: %s", err.Error())
 	}
@@ -62,7 +68,7 @@ func TestDiningDaysSuccess(test *testing.T) {
 } // test valid request with Earhart and 5-day ahead range
 func TestDiningDaysInvalidDays(test *testing.T) {
 	now := time.Now()
-	_, err := GetDiningDays("Earhart", now, 5, 0)
+	_, err := testDiningConfig.GetDiningDays("Earhart", now, 5, 0)
 	if !errors.Is(err, InvalidDayRangeErr) {
 		test.Errorf("should error: invalid day range")
 	}
@@ -71,7 +77,7 @@ func TestDiningDaysInvalidDays(test *testing.T) {
 // GetDiningLocations
 func TestDiningAllSuccess(test *testing.T) {
 	now := time.Now()
-	diningInfos, err := GetDiningLocations(now)
+	diningInfos, err := testDiningConfig.GetDiningLocations(now)
 	if err != nil { // generic error
 		test.Errorf("error: %s", err.Error())
 	}
