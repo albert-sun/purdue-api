@@ -1,7 +1,9 @@
 package purdue_api
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -25,6 +27,11 @@ func TestDiningSuccess(test *testing.T) {
 		diningInfo, err := GetDining(location, now)
 		if err != nil { // generic error
 			test.Errorf("error for %s: %s", location, err.Error())
+		}
+
+		if location == "Earhart" {
+			str, _ := json.Marshal(diningInfo)
+			fmt.Println(string(str))
 		}
 
 		if missing := checkDiningFields(diningInfo); missing != "" {

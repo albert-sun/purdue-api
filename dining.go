@@ -14,34 +14,34 @@ import (
 
 // Item represents a single served item
 type Item struct {
-	Name       string   `json:"name"`
-	Vegetarian bool     `json:"isVegetarian"`
-	Allergens  []string `json:"allergens"`
+	Name       string   `json:"Name"`
+	Vegetarian bool     `json:"Vegetarian"`
+	Allergens  []string `json:"Allergens"`
 }
 
 // Station represents a single serving station containing items
 type Station struct {
-	Name    string `json:"name"`
-	Items   []Item `json:"items"`
-	IconURL string `json:"iconURL"`
+	Name    string `json:"Name"`
+	Items   []Item `json:"Items"`
+	IconURL string `json:"IconURL"`
 }
 
 // Meal contains meal information including opening hours and station dishes (meal name is key in map)
 type Meal struct {
-	Name          string             `json:"name"` // just in case
-	Open          bool               `json:"open"`
-	Type          string             `json:"type"`
-	StartingHours string             `json:"startingHours"` // sick of parsing...
-	EndingHours   string             `json:"endingHours"`   // sick of parsing...
-	Stations      map[string]Station `json:"stations"`
+	Name          string             `json:"Name"` // just in case
+	Open          bool               `json:"Open"`
+	Type          string             `json:"Type"`
+	StartingHours string             `json:"StartingHours"` // sick of parsing...
+	EndingHours   string             `json:"EndingHours"`   // sick of parsing...
+	Stations      map[string]Station `json:"Stations"`
 }
 
 // DiningInfo contains information about one location's meals for one day.
 type DiningInfo struct {
-	Notes     string          `json:"notes"`
-	Available bool            `json:"available"` // whether has menu info
-	Location  string          `json:"location"`
-	Meals     map[string]Meal `json:"meals"`
+	Notes     string          `json:"Notes"`
+	Available bool            `json:"Available"` // whether has menu info
+	Location  string          `json:"Location"`
+	Meals     map[string]Meal `json:"Meals"`
 }
 
 // All the raw info no-one likes dealing with...
